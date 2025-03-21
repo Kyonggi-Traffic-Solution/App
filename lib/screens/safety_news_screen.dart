@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../services/news_api.dart';
-import '../widgets/bar_chart.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class SafetyNewsScreen extends StatefulWidget {
@@ -84,17 +83,6 @@ class _SafetyNewsScreenState extends State<SafetyNewsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('공용 킥보드 관련 뉴스',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
-                          Text('최신순',
-                              style: TextStyle(color: Colors.grey[600])),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
                       Expanded(
                         child: ListView.builder(
                           itemCount: _newsList.length,

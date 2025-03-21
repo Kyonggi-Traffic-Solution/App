@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-// 뉴스 아이템 모델
 class NewsItem {
   final String title;
   final String imageUrl;
@@ -19,27 +19,63 @@ class NewsItem {
 
   factory NewsItem.fromJson(Map<String, dynamic> json) {
     return NewsItem(
-      title: json['title'] ?? '',
+      title: _decodeHtmlEntities(_removeHtmlTags(json['title'] ?? '')),
       imageUrl: json['imageUrl'] ?? 'https://via.placeholder.com/150',
       newsUrl: json['link'] ?? '',
-      date: json['pubDate'] ?? '',
+      date: _formatDate(json['pubDate'] ?? ''),
       source: json['source'] ?? '네이버 뉴스',
     );
+  }
+
+  // HTML 태그 제거 헬퍼 함수
+  static String _removeHtmlTags(String htmlText) {
+    RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
+    return htmlText.replaceAll(exp, '');
+  }
+  static String _decodeHtmlEntities(String text) {
+  return text
+      .replaceAll('&quot;', '"')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&apos;', "'")
+      .replaceAll('&#x27;', "'")
+      .replaceAll('&#x2F;', '/')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&#47;', '/');
+}
+
+  // 날짜 형식 변환 헬퍼 함수
+  static String _formatDate(String apiDate) {
+    try {
+      final date = DateTime.parse(apiDate);
+      return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return apiDate;
+    }
   }
 }
 
 class NewsApiService {
-  // 실제 네이버 API를 사용하려면 네이버 개발자 센터에서 클라이언트 ID와 시크릿을 발급받아야 합니다.
-  // https://developers.naver.com/docs/serviceapi/search/news/news.md
   static Future<List<NewsItem>> fetchNews(String keyword) async {
     try {
+      // .env 파일에서 API 키를 가져옵니다
+      final clientId = dotenv.env['NAVER_CLIENT_ID'];
+      final clientSecret = dotenv.env['NAVER_CLIENT_SECRET'];
+      
+      // API 키가 없으면 더미 데이터 반환
+      if (clientId == null || clientSecret == null) {
+        print('API 키가 설정되지 않았습니다. 더미 데이터를 반환합니다.');
+        return _getDummyNewsData();
+      }
+      
       final url = Uri.parse('https://openapi.naver.com/v1/search/news.json?query=${Uri.encodeComponent(keyword)}&display=10&sort=date');
       
       final response = await http.get(
         url,
         headers: {
-          'X-Naver-Client-Id': '아이디', // 네이버 개발자 센터에서 발급받은 클라이언트 ID       assets/config/.env 파일에 저장
-          'X-Naver-Client-Secret': '비번', // 네이버 개발자 센터에서 발급받은 클라이언트 시크릿
+          'X-Naver-Client-Id': clientId,
+          'X-Naver-Client-Secret': clientSecret,
         },
       );
 
@@ -48,11 +84,11 @@ class NewsApiService {
         final List<dynamic> items = data['items'];
         return items.map((item) => NewsItem.fromJson(item)).toList();
       } else {
-        // 에러 처리를 위해 빈 리스트 대신 더미 데이터 반환
+        print('API 응답 오류: ${response.statusCode}');
         return _getDummyNewsData();
       }
     } catch (e) {
-      // 예외 발생 시 더미 데이터 반환
+      print('네트워크 오류: $e');
       return _getDummyNewsData();
     }
   }

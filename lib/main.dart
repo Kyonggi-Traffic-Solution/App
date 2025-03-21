@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'screens/main_screen.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();  // 바인딩 초기화 보장
+  await dotenv.load(fileName: 'assets/config/.env');
  
   // 에러 핸들링 추가
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
     print('Flutter error: ${details.exception}');
   };
+
   
   runApp(SafetyApp());
 }
