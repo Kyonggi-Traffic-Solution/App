@@ -1,64 +1,61 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'register_screen.dart';
-import 'main_screen.dart';
 
-class LoginScreen extends StatefulWidget {
-  final VoidCallback onLoginSuccess;
+class RegisterScreen extends StatefulWidget {
+  final VoidCallback onRegisterSuccess;
 
-  const LoginScreen({Key? key, required this.onLoginSuccess}) : super(key: key);
+  const RegisterScreen({Key? key, required this.onRegisterSuccess}) : super(key: key);
 
   @override
-  _LoginScreenState createState() => _LoginScreenState();
+  _RegisterScreenState createState() => _RegisterScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   bool _isPasswordVisible = false;
+  bool _isConfirmPasswordVisible = false;
   bool _isLoading = false;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  // Firebase 로그인 메소드
-  Future<void> _login() async {
+  // Firebase 회원가입 메소드
+  Future<void> _register() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
 
       try {
-        // Firebase 이메일/비밀번호 로그인
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
+        // Firebase 이메일/비밀번호 회원가입
+        await FirebaseAuth.instance.createUserWithEmailAndPassword(
           email: _emailController.text.trim(),
           password: _passwordController.text.trim(),
         );
 
-        // 로그인 성공 시 MainScreen으로 교체
+        // 회원가입 성공 시 콜백 호출
         if (mounted) {
-          // 별도의 콜백 대신 직접 Navigator 사용
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => MainScreen()),
-          );
+          // 여기서 콜백을 호출
+          widget.onRegisterSuccess();
         }
       } on FirebaseAuthException catch (e) {
-        // 로그인 실패 처리
-        String errorMessage = '로그인에 실패했습니다';
+        // 회원가입 실패 처리
+        String errorMessage = '회원가입에 실패했습니다';
         
-        if (e.code == 'user-not-found') {
-          errorMessage = '해당 이메일로 등록된 사용자가 없습니다';
-        } else if (e.code == 'wrong-password') {
-          errorMessage = '비밀번호가 잘못되었습니다';
+        if (e.code == 'weak-password') {
+          errorMessage = '비밀번호가 너무 약합니다';
+        } else if (e.code == 'email-already-in-use') {
+          errorMessage = '이미 사용 중인 이메일입니다';
         } else if (e.code == 'invalid-email') {
           errorMessage = '유효하지 않은 이메일 형식입니다';
-        } else if (e.code == 'user-disabled') {
-          errorMessage = '해당 계정이 비활성화되었습니다';
         }
         
         if (mounted) {
@@ -82,36 +79,19 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // 비밀번호 재설정 메소드
-  Future<void> _resetPassword() async {
-    final email = _emailController.text.trim();
-    if (email.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('비밀번호를 재설정할 이메일을 입력해주세요')),
-      );
-      return;
-    }
-
-    try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('비밀번호 재설정 이메일을 발송했습니다. 이메일을 확인해주세요')),
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('비밀번호 재설정 이메일 발송에 실패했습니다: ${e.message}')),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        title: const Text('회원가입', style: TextStyle(color: Colors.black)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -130,16 +110,16 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    '안전 신고 앱',
+                    '새 계정 만들기',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 28,
+                      fontSize: 24,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    '계정에 로그인하세요',
+                    '안전 신고 앱을 시작하기 위한 계정을 만드세요',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 16,
@@ -177,7 +157,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     obscureText: !_isPasswordVisible,
                     decoration: InputDecoration(
                       labelText: '비밀번호',
-                      hintText: '비밀번호를 입력하세요',
+                      hintText: '비밀번호를 입력하세요 (6자 이상)',
                       prefixIcon: const Icon(Icons.lock_outline),
                       suffixIcon: IconButton(
                         icon: Icon(
@@ -203,21 +183,45 @@ class _LoginScreenState extends State<LoginScreen> {
                       return null;
                     },
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 16),
 
-                  // 비밀번호 찾기 링크
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _resetPassword,
-                      child: const Text('비밀번호를 잊으셨나요?'),
+                  // 비밀번호 확인 입력 필드
+                  TextFormField(
+                    controller: _confirmPasswordController,
+                    obscureText: !_isConfirmPasswordVisible,
+                    decoration: InputDecoration(
+                      labelText: '비밀번호 확인',
+                      hintText: '비밀번호를 다시 입력하세요',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _isConfirmPasswordVisible
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _isConfirmPasswordVisible = !_isConfirmPasswordVisible;
+                          });
+                        },
+                      ),
+                      border: const OutlineInputBorder(),
                     ),
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return '비밀번호 확인을 입력해주세요';
+                      }
+                      if (value != _passwordController.text) {
+                        return '비밀번호가 일치하지 않습니다';
+                      }
+                      return null;
+                    },
                   ),
                   const SizedBox(height: 24),
 
-                  // 로그인 버튼
+                  // 회원가입 버튼
                   ElevatedButton(
-                    onPressed: _isLoading ? null : _login,
+                    onPressed: _isLoading ? null : _register,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -235,7 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           )
                         : const Text(
-                            '로그인',
+                            '회원가입',
                             style: TextStyle(
                               fontSize: 16,
                               color: Colors.white,
@@ -244,30 +248,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 회원가입 링크
+                  // 로그인 화면으로 이동 링크
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text('계정이 없으신가요?'),
+                      const Text('이미 계정이 있으신가요?'),
                       TextButton(
-                        onPressed: () {
-                          // 회원가입 화면으로 이동
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => RegisterScreen(
-                                // 콜백 함수를 변경합니다
-                                onRegisterSuccess: () {
-                                  // 회원가입 성공 시 MainScreen으로 이동
-                                  Navigator.of(context).pushReplacement(
-                                    MaterialPageRoute(builder: (context) => MainScreen()),
-                                  );
-                                },
-                              ),
-                            ),
-                          );
-                        },
-                        child: const Text('회원가입'),
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('로그인'),
                       ),
                     ],
                   ),
