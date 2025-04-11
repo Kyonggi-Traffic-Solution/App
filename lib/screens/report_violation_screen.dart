@@ -186,10 +186,7 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.menu, color: Colors.black),
-            onPressed: () {},
-          ),
+          
         ],
       ),
       body: Form(
