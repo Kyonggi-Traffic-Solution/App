@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'mascot_screen.dart';
-import 'safety_video_screen.dart';
 import 'report_violation_screen.dart';
 import 'safety_news_screen.dart';
 import 'my_reports_screen.dart';
@@ -19,12 +18,10 @@ class _MainScreenState extends State<MainScreen> {
       case 0:
         return Mascot_Screen(key: UniqueKey()); // 키 추가
       case 1:
-        return SafetyVideoScreen(key: UniqueKey());
-      case 2:
         return ReportViolationScreen(key: UniqueKey());
-      case 3:
+      case 2:
         return SafetyNewsScreen(key: UniqueKey());
-      case 4:
+      case 3:
         return MyReportsScreen(key: UniqueKey());
       default:
         return Mascot_Screen(key: UniqueKey());
@@ -45,11 +42,7 @@ class _MainScreenState extends State<MainScreen> {
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
             icon: Icon(Icons.home),
-            label: '마스코트',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.video_library),
-            label: '안전영상',
+            label: '설명서',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.report_problem),

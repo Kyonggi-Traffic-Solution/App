@@ -68,10 +68,6 @@ class _SafetyNewsScreenState extends State<SafetyNewsScreen> {
             icon: const Icon(Icons.refresh, color: Colors.black),
             onPressed: _fetchNews,
           ),
-          IconButton(
-            icon: const Icon(Icons.menu, color: Colors.black),
-            onPressed: () {},
-          ),
         ],
       ),
       body: _isLoading
