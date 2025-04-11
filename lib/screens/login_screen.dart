@@ -205,16 +205,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
 
-                  // 비밀번호 찾기 링크
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _resetPassword,
-                      child: const Text('비밀번호를 잊으셨나요?'),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
                   // 로그인 버튼
                   ElevatedButton(
                     onPressed: _isLoading ? null : _login,
