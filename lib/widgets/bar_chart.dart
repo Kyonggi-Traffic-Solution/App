@@ -22,7 +22,7 @@ class BarChart extends StatelessWidget {
           height: height * 1.5,
           color: color,
         ),
-        SizedBox(height: 8),
+        const SizedBox(height: 8),
         Text(day),
       ],
     );
