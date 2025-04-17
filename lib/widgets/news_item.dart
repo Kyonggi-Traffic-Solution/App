@@ -12,7 +12,7 @@ class NewsItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 120,
-      margin: EdgeInsets.only(right: 16),
+      margin: const EdgeInsets.only(right: 16),
       decoration: BoxDecoration(
         color: Colors.grey[200],
         borderRadius: BorderRadius.circular(10),
@@ -23,15 +23,15 @@ class NewsItem extends StatelessWidget {
             child: Container(
               decoration: BoxDecoration(
                 color: Colors.grey[300],
-                borderRadius: BorderRadius.vertical(top: Radius.circular(10)),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
               ),
             ),
           ),
           Padding(
-            padding: EdgeInsets.all(8.0),
+            padding: const EdgeInsets.all(8.0),
             child: Text(
               title,
-              style: TextStyle(fontSize: 12),
+              style: const TextStyle(fontSize: 12),
               textAlign: TextAlign.center,
             ),
           ),
