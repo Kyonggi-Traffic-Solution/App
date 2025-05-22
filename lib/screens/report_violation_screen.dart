@@ -6,6 +6,8 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'package:intl/intl.dart';
 import '../utils/ui_helper.dart';
+import 'package:native_exif/native_exif.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class ReportViolationScreen extends StatefulWidget {
   const ReportViolationScreen({Key? key}) : super(key: key);
@@ -17,39 +19,28 @@ class ReportViolationScreen extends StatefulWidget {
 class _ReportViolationScreenState extends State<ReportViolationScreen> with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _dateController = TextEditingController();
-  final _locationController = TextEditingController();
   final _violationController = TextEditingController();
-  
-  // 이미지 피커 인스턴스
   final ImagePicker _picker = ImagePicker();
-  
-  // 선택된 이미지 파일
   File? _imageFile;
-  
-  // 로딩 상태
   bool _isLoading = false;
-  
-  // 애니메이션 컨트롤러
+  bool _hasGpsData = false;
+  String _gpsInfo = '';
   late AnimationController _animationController;
   late Animation<double> _fadeInAnimation;
   
-  // 위반 사항 선택을 위한 리스트
   final List<String> _violationTypes = [
     '안전모 미착용',
     '2인 탑승',
     '기타',
   ];
   
-  // 선택된 위반 사항
   String? _selectedViolationType;
   
   @override
   void initState() {
     super.initState();
-    // 현재 날짜를 기본값으로 설정
     _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
     
-    // 애니메이션 컨트롤러 초기화
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
@@ -61,35 +52,190 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
         curve: Curves.easeIn,
       ),
     );
-    
-    // 애니메이션 시작
     _animationController.forward();
   }
   
   @override
   void dispose() {
     _dateController.dispose();
-    _locationController.dispose();
     _violationController.dispose();
     _animationController.dispose();
     super.dispose();
   }
   
+  Future<bool> _requestPermissions() async {
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      // Android 버전에 따른 권한 처리
+      if (Platform.isAndroid) {
+        // 필요한 권한 목록
+        List<Permission> permissions = [
+          Permission.storage,
+          Permission.photos,
+        ];
+        
+        // Android 10 이상에서만 필요한 ACCESS_MEDIA_LOCATION 권한 추가
+        try {
+          permissions.add(Permission.accessMediaLocation);
+        } catch (e) {
+          print("ACCESS_MEDIA_LOCATION 권한은 이 Android 버전에서 사용할 수 없습니다: $e");
+        }
+
+        // 권한 요청 및 확인
+        bool allGranted = true;
+        
+        // 스토리지 권한 요청
+        PermissionStatus storageStatus = await Permission.storage.request();
+        if (!storageStatus.isGranted) {
+          print("스토리지 권한 거부됨: $storageStatus");
+          allGranted = false;
+        }
+        
+        // 사진 권한 요청
+        PermissionStatus photosStatus = await Permission.photos.request();
+        if (!photosStatus.isGranted) {
+          print("사진 권한 거부됨: $photosStatus");
+          allGranted = false;
+        }
+        
+        // ACCESS_MEDIA_LOCATION 권한 요청 (Android 10 이상)
+        try {
+          PermissionStatus mediaLocationStatus = await Permission.accessMediaLocation.request();
+          if (!mediaLocationStatus.isGranted) {
+            print("미디어 위치 권한 거부됨: $mediaLocationStatus");
+            print("경고: ACCESS_MEDIA_LOCATION 권한이 없으면 Android 10 이상에서 GPS 정보가 제한될 수 있습니다.");
+          }
+        } catch (e) {
+          print("ACCESS_MEDIA_LOCATION 권한 요청 오류: $e");
+        }
+
+        return allGranted;
+      } else if (Platform.isIOS) {
+        // iOS 권한 처리
+        PermissionStatus photosStatus = await Permission.photos.request();
+        return photosStatus.isGranted;
+      }
+      
+      return false;
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // EXIF 데이터에서 GPS 정보 체크하는 메서드 (native_exif 패키지 사용)
+  Future<bool> _checkGpsExifData(File imageFile) async {
+    try {
+      // Exif 인스턴스 생성
+      final exif = await Exif.fromPath(imageFile.path);
+      
+      // GPS 좌표 가져오기
+      final coordinates = await exif.getLatLong();
+      
+      // 모든 EXIF 속성 가져오기 (디버깅용)
+      final attributes = await exif.getAttributes();
+      
+      // GPS 정보 저장
+      if (coordinates != null) {
+        _gpsInfo = '${coordinates.latitude} ${coordinates.longitude}';
+        
+        // 경도/위도가 실제 존재하고 유효한지 확인
+        final hasValidCoordinates = coordinates.latitude != 0 && coordinates.longitude != 0;
+        
+        // 위치 정보 자동 설정 (선택적)
+        if (hasValidCoordinates) {
+          // GPS 정보만 저장
+        }
+        
+        // Exif 인터페이스 닫기
+        await exif.close();
+        
+        return hasValidCoordinates;
+      } else {
+        // GPS 정보가 없는 경우 상세 정보 저장
+        if (attributes != null) {
+          bool hasGpsData = attributes.keys.any((key) => key.contains('GPS'));
+          if (hasGpsData) {
+            _gpsInfo = '이미지에 GPS 태그가 있지만 유효한 좌표를 추출할 수 없습니다.';
+          } else {
+            _gpsInfo = '이미지에 GPS 정보가 없습니다';
+          }
+        } else {
+          _gpsInfo = '이미지에 EXIF 데이터가 없거나 추출할 수 없습니다';
+        }
+        
+        // Exif 인터페이스 닫기
+        await exif.close();
+        
+        return false;
+      }
+    } catch (e) {
+      _gpsInfo = 'EXIF 데이터 읽기 오류: $e';
+      return false;
+    }
+  }
+  
   // 이미지 선택 메서드
   Future<void> _pickImage(ImageSource source) async {
     try {
+      // 권한 요청
+      bool permissionsGranted = await _requestPermissions();
+      
+      if (!permissionsGranted) {
+        UIHelper.showWarningSnackBar(
+          context,
+          message: '일부 권한이 거부되었습니다. 설정에서 권한을 허용해주세요.',
+        );
+        // 권한이 일부 없어도 계속 진행 (일부 기기에서는 작동할 수 있음)
+      }
+      
+      // 이미지 선택기 호출
       final XFile? pickedFile = await _picker.pickImage(
         source: source,
         maxWidth: 1800,
         maxHeight: 1800,
+        requestFullMetadata: true, // Android 10 이상에서는 이 옵션이 중요
       );
       
       if (pickedFile != null) {
+        final imageFile = File(pickedFile.path);
+        
+        // 로딩 상태 업데이트
         setState(() {
-          _imageFile = File(pickedFile.path);
+          _isLoading = true;
         });
+        
+        // GPS 정보 확인
+        final hasGpsData = await _checkGpsExifData(imageFile);
+        
+        setState(() {
+          _imageFile = imageFile;
+          _hasGpsData = hasGpsData;
+          _isLoading = false;
+        });
+        
+        // GPS 정보가 없으면 경고 메시지 표시
+        if (!hasGpsData) {
+          UIHelper.showWarningSnackBar(
+            context,
+            message: 'GPS 정보가 없는 이미지입니다. GPS 정보가 포함된 이미지를 사용해주세요.',
+          );
+        } else {
+          UIHelper.showSuccessSnackBar(
+            context, 
+            message: 'GPS 정보가 확인되었습니다: $_gpsInfo',
+          );
+        }
       }
     } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      
       UIHelper.showErrorSnackBar(
         context,
         message: '이미지 선택 중 오류가 발생했습니다: $e',
@@ -127,40 +273,150 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
     }
   }
   
-  // 위치정보 가져오기 (가상의 함수, 실제 구현은 위치 서비스에 따라 다름)
-  Future<void> _getCurrentLocation() async {
-    setState(() {
-      _isLoading = true;
-    });
-    
+  // 위치 정보 문자열에서 좌표 추출
+  GeoPoint? _extractCoordinates(String locationText) {
     try {
-      // 실제 구현에서는 여기에 위치 서비스 API를 호출
-      // 예시로 가상의 위치 정보를 반환
-      await Future.delayed(const Duration(seconds: 1));
+      // "위도: 37.123456, 경도: 127.123456" 형식에서 숫자만 추출
+      RegExp latRegex = RegExp(r'위도:\s*([-+]?\d*\.\d+)');
+      RegExp lngRegex = RegExp(r'경도:\s*([-+]?\d*\.\d+)');
       
-      if (mounted) {
-        setState(() {
-          _locationController.text = "서울시 강남구 테헤란로 123";
-          _isLoading = false;
-        });
-        
-        UIHelper.showSuccessSnackBar(
-          context,
-          message: '현재 위치를 가져왔습니다.',
-        );
+      Match? latMatch = latRegex.firstMatch(locationText);
+      Match? lngMatch = lngRegex.firstMatch(locationText);
+      
+      if (latMatch != null && lngMatch != null) {
+        double latitude = double.parse(latMatch.group(1)!);
+        double longitude = double.parse(lngMatch.group(1)!);
+        return GeoPoint(latitude, longitude);
       }
+      
+      return null;
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        
-        UIHelper.showErrorSnackBar(
-          context,
-          message: '위치 정보를 가져오는데 실패했습니다: $e',
-        );
-      }
+      print('좌표 추출 오류: $e');
+      return null;
     }
+  }
+  
+  // 카메라 설정 가이드 대화상자
+  void _showCameraSettingsGuide() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('카메라 GPS 설정 방법'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '카메라로 찍은 사진에 GPS 정보가 포함되지 않는 경우:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                _buildGuideStep('1', '기기의 기본 카메라 앱을 엽니다.'),
+                _buildGuideStep('2', '카메라 설정 메뉴로 이동합니다 (일반적으로 화면의 상단이나 설정 아이콘을 탭하세요).'),
+                _buildGuideStep('3', '"위치 태그" 또는 "위치 정보 저장" 옵션을 찾아 활성화합니다.'),
+                _buildGuideStep('4', '기기 설정에서 위치 서비스가 켜져 있는지 확인하세요.'),
+                const SizedBox(height: 12),
+                const Text(
+                  '주요 제조사별 설정 방법:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                _buildManufacturerGuide('삼성', '카메라 앱 → 설정 → 위치 태그'),
+                _buildManufacturerGuide('LG', '카메라 앱 → 설정 → 위치 정보 저장'),
+                _buildManufacturerGuide('픽셀/구글', '카메라 앱 → 설정 → 위치 저장'),
+                _buildManufacturerGuide('아이폰', '설정 → 개인 정보 보호 → 위치 서비스 → 카메라 → "앱을 사용하는 동안"으로 설정'),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.amber),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.amber),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '실내에서는 GPS 신호가 약해 위치 정보가 저장되지 않을 수 있습니다. 가능하면 실외에서 촬영하세요.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('확인'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+  
+  // 가이드 단계 위젯
+  Widget _buildGuideStep(String number, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 20,
+            height: 20,
+            decoration: const BoxDecoration(
+              color: Colors.blue,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                number,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
+  
+  // 제조사별 가이드 위젯
+  Widget _buildManufacturerGuide(String manufacturer, String instruction) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 60,
+            child: Text(
+              manufacturer,
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          Expanded(child: Text(instruction)),
+        ],
+      ),
+    );
+  }
+  
+  // 앱 설정으로 이동하는 함수
+  void _openAppSettings() {
+    openAppSettings();
   }
   
   // 신고 제출 메서드
@@ -171,6 +427,15 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
         UIHelper.showWarningSnackBar(
           context,
           message: '이미지를 첨부해주세요',
+        );
+        return;
+      }
+      
+      // GPS 정보 확인
+      if (!_hasGpsData) {
+        UIHelper.showErrorSnackBar(
+          context,
+          message: 'GPS 정보가 없는 이미지입니다. GPS 정보가 포함된 이미지를 사용해주세요.',
         );
         return;
       }
@@ -232,10 +497,11 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
           'userId': user.uid,
           'userEmail': user.email,
           'date': _dateController.text,
-          'location': _locationController.text,
           'violation': violationText,
           'imageUrl': imageUrl,
-          'status': 'submitted', // 처리 상태
+          'hasGpsData': _hasGpsData, // GPS 정보 유무 저장
+          'gpsInfo': _gpsInfo,       // 구체적인 GPS 정보 저장
+          'status': 'submitted',     // 처리 상태
           'createdAt': FieldValue.serverTimestamp(),
         };
         
@@ -276,11 +542,12 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
   
   // 폼 초기화 메서드
   void _resetForm() {
-    _locationController.clear();
     _violationController.clear();
     setState(() {
       _selectedViolationType = null;
       _imageFile = null;
+      _hasGpsData = false;
+      _gpsInfo = '';
       _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
     });
     
@@ -292,6 +559,15 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
   // 미리보기 대화상자 표시
   void _showPreviewDialog() {
     if (_formKey.currentState!.validate() && _imageFile != null) {
+      // GPS 정보 확인
+      if (!_hasGpsData) {
+        UIHelper.showErrorSnackBar(
+          context,
+          message: 'GPS 정보가 없는 이미지입니다. GPS 정보가 포함된 이미지를 사용해주세요.',
+        );
+        return;
+      }
+      
       final violationText = _selectedViolationType == '기타' 
           ? _violationController.text.trim() 
           : _selectedViolationType ?? _violationController.text.trim();
@@ -336,8 +612,8 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                       ),
                       const SizedBox(height: 16),
                       _buildPreviewItem('날짜', _dateController.text),
-                      _buildPreviewItem('장소', _locationController.text),
                       _buildPreviewItem('위반 사항', violationText),
+                      _buildPreviewItem('GPS 정보', _hasGpsData ? _gpsInfo : '없음'),
                       const SizedBox(height: 16),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -473,58 +749,51 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                   const SizedBox(height: 16),
                   Row(
                     children: [
-                      const Text('장소', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const Text('이미지 첨부', style: TextStyle(fontWeight: FontWeight.bold)),
                       const Spacer(),
-                      TextButton.icon(
-                        onPressed: _isLoading ? null : _getCurrentLocation,
-                        icon: const Icon(Icons.my_location, size: 16),
-                        label: const Text('현재 위치 가져오기'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.blue,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                      _imageFile != null ? 
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _hasGpsData ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _hasGpsData ? Colors.green : Colors.red,
+                            width: 1,
+                          ),
                         ),
-                      ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _hasGpsData ? Icons.check_circle : Icons.error,
+                              size: 16,
+                              color: _hasGpsData ? Colors.green : Colors.red,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _hasGpsData ? 'GPS 정보 포함' : 'GPS 정보 없음',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _hasGpsData ? Colors.green : Colors.red,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ) : const SizedBox(),
+                      const SizedBox(width: 8),
+                      if (!_hasGpsData && _imageFile != null)
+                        TextButton.icon(
+                          onPressed: _openAppSettings,
+                          icon: const Icon(Icons.settings, size: 16),
+                          label: const Text('권한 설정'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.blue,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withOpacity(0.1),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: TextFormField(
-                      controller: _locationController,
-                      decoration: InputDecoration(
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Colors.orange, width: 2),
-                        ),
-                        hintText: '위치를 입력해주세요',
-                        suffixIcon: const Icon(Icons.location_on, color: Colors.orange),
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return '장소를 입력해주세요';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('위험한 이미지', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   GestureDetector(
                     onTap: () {
@@ -556,6 +825,7 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                                   child: const Icon(Icons.camera_alt, color: Colors.blue),
                                 ),
                                 title: const Text('카메라로 촬영'),
+                                subtitle: const Text('GPS 정보가 포함된 이미지를 촬영해 주세요'),
                                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                                 onTap: () {
                                   Navigator.pop(context);
@@ -572,11 +842,52 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                                   child: const Icon(Icons.photo_library, color: Colors.green),
                                 ),
                                 title: const Text('갤러리에서 선택'),
+                                subtitle: const Text('GPS 정보가 포함된 이미지를 선택해 주세요'),
                                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                                 onTap: () {
                                   Navigator.pop(context);
                                   _pickImage(ImageSource.gallery);
                                 },
+                              ),
+                              const SizedBox(height: 8),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.info_outline, size: 14, color: Colors.grey[700]),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        '* 위치 정보 권한을 허용해야 정확한 GPS 정보를 얻을 수 있습니다.',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[700],
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                                child: TextButton(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _showCameraSettingsGuide();
+                                  },
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: Colors.deepOrange,
+                                    padding: EdgeInsets.zero,
+                                    alignment: Alignment.centerLeft,
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: const Text(
+                                    '카메라 GPS 설정 방법 알아보기 >',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ),
                               ),
                               const SizedBox(height: 16),
                             ],
@@ -589,14 +900,18 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                       height: 200,
                       decoration: BoxDecoration(
                         border: Border.all(
-                          color: _imageFile != null ? Colors.orange : Colors.grey,
+                          color: _imageFile != null 
+                              ? (_hasGpsData ? Colors.green : Colors.red)
+                              : Colors.grey,
                           width: _imageFile != null ? 2 : 1,
                         ),
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: _imageFile != null
                             ? [
                                 BoxShadow(
-                                  color: Colors.orange.withOpacity(0.2),
+                                  color: _hasGpsData 
+                                      ? Colors.green.withOpacity(0.2)
+                                      : Colors.red.withOpacity(0.2),
                                   blurRadius: 8,
                                   offset: const Offset(0, 2),
                                 ),
@@ -622,6 +937,7 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                                     onTap: () {
                                       setState(() {
                                         _imageFile = null;
+                                        _hasGpsData = false;
                                       });
                                     },
                                     child: Container(
@@ -638,17 +954,44 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                                     ),
                                   ),
                                 ),
+                                if (!_hasGpsData)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.withOpacity(0.8),
+                                      ),
+                                      child: const Text(
+                                        'GPS 정보가 없습니다. 다른 이미지를 선택해주세요.',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                               ],
                             )
-                          : Center(
-                              child: Column(
+                          : const Center(
+                         child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
-                                children: const [
+                                children: [
                                   Icon(Icons.camera_alt, size: 50, color: Colors.grey),
                                   SizedBox(height: 8),
                                   Text(
-                                    '이미지를 선택해주세요',
+                                    'GPS 정보가 포함된 이미지를 선택해주세요',
                                     style: TextStyle(color: Colors.grey),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  SizedBox(height: 4),
+                                  Text(
+                                    '카메라 앱의 위치 정보 저장 기능을 켜고 촬영하세요',
+                                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                                    textAlign: TextAlign.center,
                                   ),
                                 ],
                               ),
@@ -680,9 +1023,9 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                     child: DropdownButtonHideUnderline(
                       child: DropdownButtonFormField<String>(
                         value: _selectedViolationType,
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         ),
                         hint: const Text('위반 사항 유형 선택'),
                         items: _violationTypes.map((String type) {
@@ -754,6 +1097,64 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                   
                   const SizedBox(height: 24),
                   
+                  // GPS 정보 관련 안내 메시지
+                  if (_imageFile != null && !_hasGpsData)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.red,
+                          width: 1,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded, color: Colors.red),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'GPS 정보가 포함된 이미지가 필요합니다.',
+                                  style: TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            '다음을 확인해보세요:',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('• 카메라 앱에서 위치 정보 저장 기능이 켜져 있는지 확인하세요.'),
+                          const Text('• 앱 설정에서 위치 접근 권한이 허용되어 있는지 확인하세요.'),
+                          const Text('• 직접 촬영한 사진을 사용하면 GPS 정보가 더 정확합니다.'),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              TextButton.icon(
+                                onPressed: _openAppSettings,
+                                icon: const Icon(Icons.settings, size: 16),
+                                label: const Text('권한 설정'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.blue,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  
                   // 신고하기 전 미리보기 버튼
                   TweenAnimationBuilder<double>(
                     tween: Tween<double>(begin: 0.0, end: 1.0),
@@ -771,7 +1172,9 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                     child: SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: _isLoading ? null : _showPreviewDialog,
+                        onPressed: (_isLoading || (_imageFile != null && !_hasGpsData)) 
+                            ? null 
+                            : _showPreviewDialog,
                         icon: const Icon(Icons.preview),
                         label: const Text('미리보기 및 신고하기'),
                         style: ElevatedButton.styleFrom(
@@ -781,6 +1184,9 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                             borderRadius: BorderRadius.circular(12),
                           ),
                           elevation: 3,
+                          // 버튼 비활성화 스타일
+                          disabledBackgroundColor: Colors.grey,
+                          disabledForegroundColor: Colors.white,
                         ),
                       ),
                     ),
@@ -826,26 +1232,40 @@ class _ReportViolationScreenState extends State<ReportViolationScreen> with Sing
                           style: TextStyle(fontSize: 14),
                         ),
                         SizedBox(height: 8),
+        Text(
+                          '2. 이미지 첨부: 위반 사항을 확인할 수 있는 사진을 첨부하세요. GPS 정보가 포함된 이미지만 사용 가능합니다. 위치 정보 저장 기능이 켜진 상태에서 촬영된 사진을 사용하세요.',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                        ),
+                        SizedBox(height: 4),
                         Text(
-                          '2. 장소 입력: 위반 장소를 최대한 상세히 입력하세요. \'현재 위치 가져오기\' 버튼을 눌러 자동으로 현재 위치를 입력할 수 있습니다.',
+                          '   * 카메라로 촬영 시: 기기의 카메라 앱 설정에서 "위치 태그" 또는 "위치 정보 저장" 기능이 켜져 있어야 합니다.',
+                          style: TextStyle(fontSize: 12, color: Colors.deepOrange),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '   * 갤러리에서 선택 시: 촬영 당시 위치 정보가 저장된 사진을 선택하세요.',
+                          style: TextStyle(fontSize: 12, color: Colors.deepOrange),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          '3. 위반 사항 선택: 위반 사항의 유형을 선택하거나, \'기타\'를 선택한 경우 상세 내용을 입력하세요.',
                           style: TextStyle(fontSize: 14),
                         ),
                         SizedBox(height: 8),
                         Text(
-                          '3. 이미지 첨부: 위반 사항을 확인할 수 있는 사진을 첨부하세요. 사진은 명확하게 찍어주세요.',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          '4. 위반 사항 선택: 위반 사항의 유형을 선택하거나, \'기타\'를 선택한 경우 상세 내용을 입력하세요.',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          '5. 미리보기 및 신고: 입력한 내용을 미리보기로 확인한 후 신고하세요.',
+                          '4. 미리보기 및 신고: 입력한 내용을 미리보기로 확인한 후 신고하세요.',
                           style: TextStyle(fontSize: 14),
                         ),
                         SizedBox(height: 16),
+                        Text(
+                          '※ GPS 정보가 없는 이미지는 신고가 불가능합니다. 꼭 GPS 정보가 포함된 이미지를 사용해 주세요.',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
+                        ),
+                        SizedBox(height: 8),
                         Text(
                           '※ 허위 신고나 악의적인 신고는 법적 책임이 따를 수 있습니다.',
                           style: TextStyle(
